@@ -19,7 +19,7 @@ const MARKER_DEFINITIONS: Array<{ language: string; markers: string[]; }> = [
   { language: 'java', markers: ['pom.xml', 'build.gradle'] },
   { language: 'ruby', markers: ['Gemfile'] },
   { language: 'php', markers: ['composer.json'] },
-  { language: 'kotlin', markers: ['build.gradle.kts'] },
+  { language: 'kotlin', markers: ['build.gradle.kts', 'settings.gradle.kts'] },
   { language: 'swift', markers: ['Package.swift'] }
 ];
 

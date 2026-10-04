@@ -11,7 +11,7 @@ type MarkedString = string | { language: string; value: string };
 
 import type { LanguageServerHealth } from "../lsp/lifecycle-manager";
 
-import { uriToPath } from "../utils/uri";
+import { isInProjectBuildDirectory, uriToDisplayPath } from "../utils/uri";
 
 type DiagnosticWithUri = Diagnostic & { uri?: string };
 
@@ -103,34 +103,239 @@ export function formatHover(result: Hover | null): string {
   return summaryLine || firstCode || rawText;
 }
 
-export function formatDefinition(locations: Location[] | null): string {
+export function formatDefinition(
+  locations: Location[] | null,
+  root?: string | null,
+  noun = "definition",
+): string {
   if (!locations || locations.length === 0) {
     return "No result";
   }
 
   if (locations.length === 1) {
-    return `Found 1 definition: \`${formatLocation(locations[0])}\``;
+    return `Found 1 ${noun}: \`${formatLocation(locations[0], root)}\``;
   }
 
   return [
-    "Found definitions:",
-    ...locations.map((location) => `- \`${formatLocation(location)}\``),
+    `Found ${noun}s:`,
+    ...locations.map((location) => `- \`${formatLocation(location, root)}\``),
   ].join("\n");
 }
 
-export function formatReferences(locations: Location[] | null): string {
+/** Options for tools that can return long location lists. */
+export interface ListOptions {
+  /** Project root; paths under it are shown relative to it. */
+  root?: string | null;
+  /** Keep only results whose displayed path contains this text. */
+  path?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListPage<T> {
+  items: T[];
+  /** Results left after dropping build output and applying the path filter. */
+  total: number;
+  /** Distinct files among those `total` results. */
+  files: number;
+  /** Results left after dropping build output, before the path filter. */
+  unfiltered: number;
+  /** Results dropped because they live in a build directory of the project. */
+  hidden: number;
+  offset: number;
+}
+
+/**
+ * Drops results from the project's build directories (compiled jars and
+ * generated code that duplicate the sources), filters by path, sorts by path then
+ * position (servers return results in no stable order, which would make offsets
+ * meaningless), and cuts one page.
+ */
+export function selectPage<T>(
+  items: T[],
+  locationOf: (item: T) => Location,
+  options: ListOptions,
+  defaultLimit: number,
+): ListPage<T> {
+  const keyed = items
+    .map((item) => ({ item, location: locationOf(item) }))
+    .filter((entry) => !isInProjectBuildDirectory(entry.location.uri, options.root))
+    .map((entry) => ({
+      ...entry,
+      path: uriToDisplayPath(entry.location.uri, options.root),
+    }));
+  const filtered = options.path
+    ? keyed.filter((entry) => entry.path.includes(options.path ?? ""))
+    : keyed;
+  filtered.sort(
+    (left, right) =>
+      compareStrings(left.path, right.path) ||
+      left.location.range.start.line - right.location.range.start.line ||
+      left.location.range.start.character - right.location.range.start.character,
+  );
+
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const limit = Math.max(1, Math.floor(options.limit ?? defaultLimit));
+  return {
+    items: filtered.slice(offset, offset + limit).map((entry) => entry.item),
+    total: filtered.length,
+    files: new Set(filtered.map((entry) => entry.path)).size,
+    unfiltered: keyed.length,
+    hidden: items.length - keyed.length,
+    offset,
+  };
+}
+
+export const DEFAULT_LOCATION_LIMIT = 200;
+export const DEFAULT_SYMBOL_LIMIT = 100;
+
+/**
+ * Formats locations grouped by file, so each path is printed once:
+ * "- `src/a.kt`: 3:19, 15:50".
+ */
+export function formatLocationList(
+  locations: Location[] | null,
+  noun: string,
+  options: ListOptions = {},
+): string {
   if (!locations || locations.length === 0) {
     return "No result";
   }
 
-  return [
-    `Found ${locations.length} references:`,
-    ...locations.map((location) => `- \`${formatLocation(location)}\``),
-  ].join("\n");
+  const page = selectPage(
+    locations,
+    (location) => location,
+    options,
+    DEFAULT_LOCATION_LIMIT,
+  );
+  if (page.total === 0) {
+    return emptyListMessage(noun, page, options);
+  }
+
+  const groups = groupByPath(page.items, (location) => location, options.root);
+  const lines = [listHeader(noun, page, options)];
+  for (const [path, entries] of groups) {
+    const positions = entries
+      .map(
+        (location) =>
+          `${location.range.start.line + 1}:${location.range.start.character + 1}`,
+      )
+      .join(", ");
+    lines.push(`- \`${path}\`: ${positions}`);
+  }
+
+  return appendPageFooter(lines, page).join("\n");
+}
+
+export function formatReferences(
+  locations: Location[] | null,
+  options: ListOptions = {},
+): string {
+  return formatLocationList(locations, "reference", options);
+}
+
+/** Formats workspace symbols grouped by file, one symbol per line. */
+export function formatWorkspaceSymbols(
+  symbols: SymbolInformation[] | null,
+  options: ListOptions = {},
+): string {
+  if (!symbols || symbols.length === 0) {
+    return "No result";
+  }
+
+  const page = selectPage(
+    symbols,
+    (symbol) => symbol.location,
+    options,
+    DEFAULT_SYMBOL_LIMIT,
+  );
+  if (page.total === 0) {
+    return emptyListMessage("symbol", page, options);
+  }
+
+  const groups = groupByPath(page.items, (symbol) => symbol.location, options.root);
+  const lines = [listHeader("symbol", page, options)];
+  for (const [path, entries] of groups) {
+    lines.push(`- \`${path}\``);
+    for (const symbol of entries) {
+      const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
+      const start = symbol.location.range.start;
+      lines.push(
+        `  - ${icon} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`,
+      );
+    }
+  }
+
+  return appendPageFooter(lines, page).join("\n");
+}
+
+function listHeader<T>(noun: string, page: ListPage<T>, options: ListOptions): string {
+  const filter = options.path
+    ? ` matching path "${options.path}" (${page.unfiltered} in total)`
+    : "";
+  return `Found ${plural(page.total, noun)} in ${plural(page.files, "file")}${filter}:`;
+}
+
+function emptyListMessage<T>(
+  noun: string,
+  page: ListPage<T>,
+  options: ListOptions,
+): string {
+  const message =
+    options.path && page.unfiltered > 0
+      ? `No ${noun}s matching path "${options.path}" (${page.unfiltered} in total)`
+      : `No ${noun}s outside build directories`;
+  return `${message}${hiddenNote(page)}`;
+}
+
+function appendPageFooter<T>(lines: string[], page: ListPage<T>): string[] {
+  const end = page.offset + page.items.length;
+  const footer: string[] = [];
+  if (page.items.length === 0) {
+    footer.push(`No results at offset ${page.offset}; there are ${page.total} in total.`);
+  } else if (page.offset > 0 || end < page.total) {
+    const more = end < page.total ? ` Pass offset: ${end} for more.` : "";
+    footer.push(`Showing ${page.offset + 1}–${end} of ${page.total}.${more}`);
+  }
+
+  if (page.hidden > 0) {
+    footer.push(`Hidden: ${plural(page.hidden, "result")} from build directories.`);
+  }
+
+  return footer.length === 0 ? lines : [...lines, "", ...footer];
+}
+
+function hiddenNote<T>(page: ListPage<T>): string {
+  return page.hidden > 0 ? ` (${page.hidden} hidden in build directories)` : "";
+}
+
+function groupByPath<T>(
+  items: T[],
+  locationOf: (item: T) => Location,
+  root?: string | null,
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const path = uriToDisplayPath(locationOf(item).uri, root);
+    const bucket = groups.get(path) ?? [];
+    bucket.push(item);
+    groups.set(path, bucket);
+  }
+
+  return groups;
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function formatSymbols(
   symbols: Array<DocumentSymbol | SymbolInformation> | null,
+  root?: string | null,
 ): string {
   if (!symbols || symbols.length === 0) {
     return "No result";
@@ -141,7 +346,7 @@ export function formatSymbols(
       const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
       const detail =
         "location" in symbol
-          ? formatLocation(symbol.location)
+          ? formatLocation(symbol.location, root)
           : `${symbol.name}`;
       return `- ${icon} \`${symbol.name}\`${"location" in symbol ? ` — ${detail}` : ""}`;
     })
@@ -151,6 +356,7 @@ export function formatSymbols(
 export function formatDiagnostics(
   diagnostics: DiagnosticWithUri[] | null,
   scope: "file" | "workspace",
+  root?: string | null,
 ): string {
   if (!diagnostics || diagnostics.length === 0) {
     return scope === "workspace"
@@ -180,7 +386,7 @@ export function formatDiagnostics(
 
     lines.push("", `### ${DIAGNOSTIC_SEVERITY_LABELS[severity]}`);
     for (const diagnostic of bucket) {
-      lines.push(`- ${formatDiagnostic(diagnostic)}`);
+      lines.push(`- ${formatDiagnostic(diagnostic, root)}`);
     }
   }
 
@@ -265,13 +471,16 @@ function markedStringToText(value: MarkedString): string {
     : `\`\`\`${value.language}\n${value.value}\n\`\`\``;
 }
 
-function formatLocation(location: Location): string {
-  return `${uriToPath(location.uri)}:${location.range.start.line + 1}:${location.range.start.character + 1}`;
+function formatLocation(location: Location, root?: string | null): string {
+  return `${uriToDisplayPath(location.uri, root)}:${location.range.start.line + 1}:${location.range.start.character + 1}`;
 }
 
-function formatDiagnostic(diagnostic: DiagnosticWithUri): string {
+function formatDiagnostic(
+  diagnostic: DiagnosticWithUri,
+  root?: string | null,
+): string {
   const location = diagnostic.uri
-    ? `\`${uriToPath(diagnostic.uri)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}\` `
+    ? `\`${uriToDisplayPath(diagnostic.uri, root)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}\` `
     : "";
   const source = diagnostic.source ? `${diagnostic.source}: ` : "";
   return `${location}${source}${diagnostic.message}`.trim();
