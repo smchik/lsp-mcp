@@ -78,29 +78,31 @@ const DIAGNOSTIC_SEVERITY_LABELS: Record<number, string> = {
   4: "Hints",
 };
 
+/** Hover text longer than this is cut, so a huge KDoc can't flood the context. */
+export const HOVER_MAX_LENGTH = 4000;
+
+/**
+ * Returns the server's hover markdown as-is (signature code block plus the full
+ * documentation), trimmed and capped at HOVER_MAX_LENGTH characters.
+ */
 export function formatHover(result: Hover | null): string {
   if (!result) {
     return "No result";
   }
 
-  const rawText = hoverContentsToText(result.contents).trim();
-  if (!rawText) {
+  const text = hoverContentsToText(result.contents).trim();
+  if (!text) {
     return "No result";
   }
 
-  const codeBlocks = Array.from(
-    rawText.matchAll(/```(?<lang>[^\n`]*)\n(?<code>[\s\S]*?)```/g),
-  );
-  const firstCode = codeBlocks[0]?.groups?.code?.trim();
-  const firstLang = codeBlocks[0]?.groups?.lang?.trim() ?? "";
-  const summarySource = rawText.replace(/```[\s\S]*?```/g, "").trim();
-  const summaryLine = summarySource.split(/\n+/).find(Boolean) ?? "";
-
-  if (firstCode && summaryLine) {
-    return `**${firstCode}** — ${summaryLine}\n\n\`\`\`${firstLang}\n${firstCode}\n\`\`\``;
+  if (text.length <= HOVER_MAX_LENGTH) {
+    return text;
   }
 
-  return summaryLine || firstCode || rawText;
+  const cut = text.slice(0, HOVER_MAX_LENGTH);
+  // Close a code block left open by the cut so the rest renders as text.
+  const openFence = (cut.match(/```/g)?.length ?? 0) % 2 === 1 ? "\n```" : "";
+  return `${cut}${openFence}\n\n(Truncated: showing ${HOVER_MAX_LENGTH} of ${text.length} characters.)`;
 }
 
 export function formatDefinition(

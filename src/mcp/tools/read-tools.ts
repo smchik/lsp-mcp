@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import type {
+  Hover,
   Location,
   SymbolInformation,
 } from "vscode-languageserver-protocol";
@@ -13,6 +14,7 @@ import {
   formatDefinition,
   formatDiagnostics,
   formatHealth,
+  formatHover,
   formatLocationList,
   formatReferences,
   formatSymbols,
@@ -76,6 +78,25 @@ export function registerReadTools(
         format: (result) =>
           formatDefinition(asLocationArray(result), lifecycleManager.getRoot?.()),
         raw: (result) => normalizeLocations(asLocationArray(result)),
+      });
+    },
+  );
+
+  registrar.registerTool(
+    "lsp_hover",
+    {
+      description:
+        "Show the type, signature and documentation of the symbol at a position, including library symbols whose definition is only a compiled class.",
+      inputSchema: positionSchema,
+    },
+    async (args) => {
+      return await runFileRequest<Hover | null>({
+        args,
+        lifecycleManager,
+        method: "textDocument/hover",
+        timeoutMs: 5000,
+        format: formatHover,
+        raw: (result) => result,
       });
     },
   );

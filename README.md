@@ -35,7 +35,7 @@ A Model Context Protocol (MCP) server that gives language models access to **Lan
 - **🤖 Hands-Free Initialization** — Clients that support [MCP Roots](https://modelcontextprotocol.io/docs/concepts/roots) auto-initialize on connect — `lsp_init` disappears from the tool list once all servers start cleanly
 - **💾 Cross-Session Persistence** — Initialized workspaces and their ready languages are remembered across server restarts
 - **🔁 Graceful Degradation** — `lsp_init` reappears if a previously-working server starts failing (e.g. language added, binary missing)
-- **🛠 12 LSP Tools** — Definition, references, symbols, diagnostics, rename, code actions, formatting, and more
+- **🛠 13 LSP Tools** — Definition, hover, references, symbols, diagnostics, rename, code actions, formatting, and more
 - **📝 Read & Write Operations** — Both inspection and modification of code via LSP
 - **🌐 Polyglot Support** — Multiple language servers run simultaneously in the same project
 - **📋 Hybrid Responses** — Human-readable `text` field + raw LSP data in `raw` field
@@ -114,6 +114,7 @@ lsp_init({ root: "/path/to/project", languages: ["python", "typescript"] })
 | ----------------------- | ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------- |
 | `lsp_init`              | Initialize server for a project root | `root` (required), `languages` (optional string array) | Conditional — hidden after a successful explicit `lsp_init` call |
 | `lsp_definition`        | Go to definition                     | `file`, `line`, `character`                            | Always                                                           |
+| `lsp_hover`             | Type, signature and docs of a symbol | `file`, `line`, `character` (text capped at 4000 chars) | Always                                                          |
 | `lsp_references`        | Find all references                  | `file`, `line`, `character`, `includeDeclaration`, [list options](#long-result-lists) | Always                                             |
 | `lsp_document_symbols`  | List symbols in a file               | `file`                                                 | Always                                                           |
 | `lsp_workspace_symbols` | Search symbols across workspace      | `query`, [list options](#long-result-lists)            | Always                                                           |

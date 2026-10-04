@@ -14,13 +14,22 @@ import {
 import type { CompletionItem } from 'vscode-languageserver-protocol';
 
 describe('mcp formatters', () => {
-  it('formats hover results as markdown summary plus code block', () => {
+  it('returns the full hover markdown', () => {
     expect(formatHover({
       contents: {
         kind: 'markdown',
-        value: '```ts\ntype Foo = string\n```\n\nFoo description'
+        value: '```ts\ntype Foo = string\n```\n\nFoo description\n\nSecond paragraph\n'
       }
-    })).toBe('**type Foo = string** — Foo description\n\n```ts\ntype Foo = string\n```');
+    })).toBe('```ts\ntype Foo = string\n```\n\nFoo description\n\nSecond paragraph');
+  });
+
+  it('caps long hover text and closes an open code block', () => {
+    const text = formatHover({
+      contents: { kind: 'markdown', value: '```kotlin\n' + 'x'.repeat(5000) + '\n```' }
+    });
+
+    expect(text).toContain('\n```\n\n(Truncated: showing 4000 of');
+    expect(text.length).toBeLessThan(4100);
   });
 
   it('formats definition locations with file coordinates', () => {

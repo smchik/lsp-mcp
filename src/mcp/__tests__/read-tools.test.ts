@@ -261,6 +261,38 @@ describe("registerReadTools", () => {
     });
   });
 
+  it("requests hover at the position and returns its markdown", async () => {
+    const registrar = new FakeRegistrar();
+    const hover = {
+      contents: {
+        kind: "markdown",
+        value: "```kotlin\npublic sealed class Either<out A, out B>\n```\n\nRepresents a value of one of two possible types.",
+      },
+    };
+    const client = createClient(hover);
+    registerReadTools(registrar, createLifecycle({ fileClient: client }), {
+      initializeManager: jest.fn(),
+    });
+
+    const result = await getHandler(
+      registrar,
+      "lsp_hover",
+    )({ file: "/workspace/src/index.kt", line: 2, character: 20 });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "textDocument/hover",
+      {
+        textDocument: { uri: "file:///workspace/src/index.kt" },
+        position: { line: 2, character: 20 },
+      },
+      5000,
+    );
+    expect(result).toEqual({
+      content: [{ type: "text", text: hover.contents.value }],
+      raw: hover,
+    });
+  });
+
   it("uses the declaration flag when requesting references", async () => {
     const registrar = new FakeRegistrar();
     const client = createClient([]);
