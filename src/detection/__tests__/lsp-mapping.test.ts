@@ -39,6 +39,7 @@ describe('lsp-mapping', () => {
     expect(getLspCandidates('javascript')).toEqual(getLspCandidates('typescript'));
     expect(getLspCandidates('cpp')).toEqual(getLspCandidates('c'));
     expect(getLspCandidates('kotlin')).toEqual([
+      { cmd: 'kotlin-lsp', args: ['--stdio'], pkg: 'kotlin-lsp', mgr: 'brew' },
       { cmd: 'kotlin-language-server', args: ['--stdio'], pkg: 'kotlin-language-server', mgr: 'npm' }
     ]);
   });

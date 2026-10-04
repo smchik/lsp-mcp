@@ -229,13 +229,8 @@ function getSmokeCandidate(
   language: string,
 ): ReturnType<typeof getLspCandidates>[number] | null {
   const candidates = getLspCandidates(language);
-  const supportedCandidates =
-    language === "kotlin"
-      ? candidates.filter((candidate) => candidate.cmd === "intellij-server")
-      : candidates;
-
   return (
-    supportedCandidates.find((candidate) => commandExists(candidate.cmd)) ??
+    candidates.find((candidate) => commandExists(candidate.cmd)) ??
     null
   );
 }

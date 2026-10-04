@@ -58,6 +58,7 @@ const LANGUAGE_TO_CANDIDATES: Record<string, LspCandidate[]> = {
     { cmd: 'intelephense', args: ['--stdio'], pkg: 'intelephense', mgr: 'npm' }
   ],
   kotlin: [
+    { cmd: 'kotlin-lsp', args: ['--stdio'], pkg: 'kotlin-lsp', mgr: 'brew' },
     { cmd: 'kotlin-language-server', args: ['--stdio'], pkg: 'kotlin-language-server', mgr: 'npm' }
   ],
   swift: [

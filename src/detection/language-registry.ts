@@ -21,6 +21,7 @@ const EXTENSION_MAP: Record<string, LanguageEntry> = {
   '.rb': { language: 'ruby', languageId: 'ruby' },
   '.php': { language: 'php', languageId: 'php' },
   '.kt': { language: 'kotlin', languageId: 'kotlin' },
+  '.kts': { language: 'kotlin', languageId: 'kotlin' },
   '.swift': { language: 'swift', languageId: 'swift' }
 };
 
