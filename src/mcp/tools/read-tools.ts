@@ -106,7 +106,7 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/hover",
         timeoutMs: 5000,
-        format: formatHover,
+        format: (result) => formatHover(result, lifecycleManager.getRoot?.()),
         raw: (result) => result,
       });
     },

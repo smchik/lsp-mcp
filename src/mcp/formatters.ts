@@ -16,34 +16,39 @@ import { isInProjectBuildDirectory, uriToDisplayPath } from "../utils/uri";
 
 type DiagnosticWithUri = Diagnostic & { uri?: string };
 
-const SYMBOL_KIND_ICONS: Record<number, string> = {
-  1: "📄",
-  2: "📦",
-  3: "🔖",
-  4: "🧩",
-  5: "📦",
-  6: "🔧",
-  7: "🏗️",
-  8: "🧠",
-  9: "📐",
-  10: "📚",
-  11: "🔌",
-  12: "ƒ",
-  13: "≡",
-  14: "🔒",
-  15: "📝",
-  16: "№",
-  17: "🧮",
-  18: "📏",
-  19: "🧱",
-  20: "🔑",
-  21: "❌",
-  22: "🧩",
-  23: "➡️",
-  24: "🎯",
-  25: "📦",
-  26: "🔎",
+/** LSP SymbolKind names, shown before each symbol (e.g. "class `Foo` 3:7"). */
+const SYMBOL_KIND_NAMES: Record<number, string> = {
+  1: "file",
+  2: "module",
+  3: "namespace",
+  4: "package",
+  5: "class",
+  6: "method",
+  7: "property",
+  8: "field",
+  9: "constructor",
+  10: "enum",
+  11: "interface",
+  12: "function",
+  13: "variable",
+  14: "constant",
+  15: "string",
+  16: "number",
+  17: "boolean",
+  18: "array",
+  19: "object",
+  20: "key",
+  21: "null",
+  22: "enum member",
+  23: "struct",
+  24: "event",
+  25: "operator",
+  26: "type parameter",
 };
+
+function symbolKindName(kind: number): string {
+  return SYMBOL_KIND_NAMES[kind] ?? "symbol";
+}
 
 const COMPLETION_KIND_LABELS: Record<number, string> = {
   2: "Methods",
@@ -79,6 +84,31 @@ const DIAGNOSTIC_SEVERITY_LABELS: Record<number, string> = {
   4: "Hints",
 };
 
+/**
+ * Rewrites markdown link targets like `(file:///abs/Foo.kt#13,27)` — how servers
+ * link symbols in documentation — to the `path:line:col` form used elsewhere,
+ * relative to the root when inside it. "#L13", "#13" and "#13,27" are understood;
+ * other fragments are kept as they are.
+ */
+function shortenFileLinks(text: string, root?: string | null): string {
+  return text.replace(
+    /\((file:\/\/\/[^)\s#]*)(#[^)\s]*)?\)/g,
+    (_match, uri: string, fragment: string | undefined) => {
+      const target = uriToDisplayPath(uri, root);
+      const position = fragment?.match(/^#L?(\d+)(?:[,:]C?(\d+))?$/);
+      if (!fragment) {
+        return `(${target})`;
+      }
+
+      if (!position) {
+        return `(${target}${fragment})`;
+      }
+
+      return `(${target}:${position[1]}${position[2] ? `:${position[2]}` : ""})`;
+    },
+  );
+}
+
 /** Hover text longer than this is cut, so a huge KDoc can't flood the context. */
 export const HOVER_MAX_LENGTH = 4000;
 
@@ -86,12 +116,12 @@ export const HOVER_MAX_LENGTH = 4000;
  * Returns the server's hover markdown as-is (signature code block plus the full
  * documentation), trimmed and capped at HOVER_MAX_LENGTH characters.
  */
-export function formatHover(result: Hover | null): string {
+export function formatHover(result: Hover | null, root?: string | null): string {
   if (!result) {
     return "No result";
   }
 
-  const text = hoverContentsToText(result.contents).trim();
+  const text = shortenFileLinks(hoverContentsToText(result.contents).trim(), root);
   if (!text) {
     return "No result";
   }
@@ -313,10 +343,10 @@ export function formatWorkspaceSymbols(
   for (const [path, entries] of groups) {
     lines.push(`- \`${path}\``);
     for (const symbol of entries) {
-      const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
+      const kind = symbolKindName(symbol.kind);
       const start = symbol.location.range.start;
       lines.push(
-        `  - ${icon} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`,
+        `  - ${kind} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`,
       );
     }
   }
@@ -405,15 +435,15 @@ export function formatSymbols(
 
   const lines: string[] = [];
   const visit = (symbol: DocumentSymbol | SymbolInformation, depth: number): void => {
-    const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
+    const kind = symbolKindName(symbol.kind);
     const indent = "  ".repeat(depth);
     if ("location" in symbol) {
-      lines.push(`${indent}- ${icon} \`${symbol.name}\` — ${formatLocation(symbol.location, root)}`);
+      lines.push(`${indent}- ${kind} \`${symbol.name}\` — ${formatLocation(symbol.location, root)}`);
       return;
     }
 
     const start = symbol.selectionRange.start;
-    lines.push(`${indent}- ${icon} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`);
+    lines.push(`${indent}- ${kind} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`);
     if (depth + 1 < DOCUMENT_SYMBOL_MAX_DEPTH) {
       for (const child of symbol.children ?? []) {
         visit(child, depth + 1);

@@ -161,12 +161,14 @@ Found 1 definition: `domain/src/main/java/…/UseCase.kt:20:36`
   protected abstract suspend fun execute(params: Params): Either<Failure, Type>
 ```
 
-`lsp_document_symbols` shows where each symbol's name is and nests members under their class, up to three levels:
+`lsp_document_symbols` shows each symbol's kind and where its name is, and nests members under their class, up to three levels:
 
 ```
-- 📦 `OfficesViewModel` 22:7
-  - 🔧 `fetchOffices` 40:9
+- class `OfficesViewModel` 22:7
+  - method `fetchOffices` 40:9
 ```
+
+`lsp_hover` returns the server's signature and documentation. Links to project files in the documentation use the same form, e.g. `[execute](domain/…/UseCase.kt:20:36)`.
 
 ### Long result lists
 

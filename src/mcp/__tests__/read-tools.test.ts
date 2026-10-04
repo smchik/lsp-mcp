@@ -583,7 +583,7 @@ describe("registerReadTools", () => {
         "lsp_document_symbols",
       )({ file: "/workspace/src/index.ts" }),
     ).resolves.toEqual({
-      content: [{ type: "text", text: "- 📦 `DocSymbol` 1:1" }],
+      content: [{ type: "text", text: "- class `DocSymbol` 1:1" }],
       raw: [
         {
           name: "DocSymbol",

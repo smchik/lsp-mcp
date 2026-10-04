@@ -23,6 +23,21 @@ describe('mcp formatters', () => {
     })).toBe('```ts\ntype Foo = string\n```\n\nFoo description\n\nSecond paragraph');
   });
 
+  it('shortens file links in hover text to project-relative positions', () => {
+    expect(formatHover({
+      contents: {
+        kind: 'markdown',
+        value: [
+          'Implement [execute](file:///workspace/domain/UseCase.kt#20,36), not [invoke](file:///workspace/domain/UseCase.kt#L15).',
+          'See [Other](file:///elsewhere/Other.kt), [Doc](file:///workspace/README.md#usage) and [site](https://example.com/a#b).'
+        ].join('\n')
+      }
+    }, '/workspace')).toBe([
+      'Implement [execute](domain/UseCase.kt:20:36), not [invoke](domain/UseCase.kt:15).',
+      'See [Other](/elsewhere/Other.kt), [Doc](README.md#usage) and [site](https://example.com/a#b).'
+    ].join('\n'));
+  });
+
   it('caps long hover text and closes an open code block', () => {
     const text = formatHover({
       contents: { kind: 'markdown', value: '```kotlin\n' + 'x'.repeat(5000) + '\n```' }
@@ -135,9 +150,9 @@ describe('mcp formatters', () => {
         ]
       }
     ])).toBe([
-      '- 📦 `OfficesViewModel` 22:7',
-      '  - 🔧 `fetchOffices` 40:9',
-      '    - ≡ `result` 41:13'
+      '- class `OfficesViewModel` 22:7',
+      '  - method `fetchOffices` 40:9',
+      '    - variable `result` 41:13'
     ].join('\n'));
   });
 
@@ -218,8 +233,8 @@ describe('mcp formatters', () => {
       ], { root: '/workspace', path: 'data/' })).toBe([
         'Found 2 symbols in 1 file matching path "data/" (3 in total):',
         '- `data/UserRepositoryImpl.kt`',
-        '  - 📦 `UserRepositoryImpl` 21:7',
-        '  - 🔧 `removeAccount` 41:5'
+        '  - class `UserRepositoryImpl` 21:7',
+        '  - method `removeAccount` 41:5'
       ].join('\n'));
     });
   });
@@ -248,7 +263,7 @@ describe('mcp formatters', () => {
           }
         }
       }
-    ])).toContain('- 📦 `UserService` — /workspace/src/user-service.ts:5:1');
+    ])).toContain('- class `UserService` — /workspace/src/user-service.ts:5:1');
   });
 
   it('formats diagnostics grouped by severity with errors first', () => {
