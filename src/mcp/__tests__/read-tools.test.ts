@@ -184,11 +184,11 @@ describe("registerReadTools", () => {
     const definition = await getHandler(
       registrar,
       "lsp_definition",
-    )({ file: "/workspace/src/index.ts", line: 2, character: 4 });
+    )({ file: "/workspace/src/index.ts", line: 3, character: 5 });
     await getHandler(
       registrar,
       "lsp_definition",
-    )({ file: "/workspace/src/index.ts", line: 2, character: 4 });
+    )({ file: "/workspace/src/index.ts", line: 3, character: 5 });
 
     expect(client.ensureDidOpen).toHaveBeenCalledTimes(2);
     expect(client.ensureDidOpen).toHaveBeenCalledWith(
@@ -241,7 +241,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
+      )({ file: "/workspace/src/index.ts", line: 2, character: 2 }),
     ).resolves.toEqual({
       content: [
         {
@@ -261,6 +261,38 @@ describe("registerReadTools", () => {
     });
   });
 
+  it("requests hover at the position and returns its markdown", async () => {
+    const registrar = new FakeRegistrar();
+    const hover = {
+      contents: {
+        kind: "markdown",
+        value: "```kotlin\npublic sealed class Either<out A, out B>\n```\n\nRepresents a value of one of two possible types.",
+      },
+    };
+    const client = createClient(hover);
+    registerReadTools(registrar, createLifecycle({ fileClient: client }), {
+      initializeManager: jest.fn(),
+    });
+
+    const result = await getHandler(
+      registrar,
+      "lsp_hover",
+    )({ file: "/workspace/src/index.kt", line: 3, character: 21 });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "textDocument/hover",
+      {
+        textDocument: { uri: "file:///workspace/src/index.kt" },
+        position: { line: 2, character: 20 },
+      },
+      5000,
+    );
+    expect(result).toEqual({
+      content: [{ type: "text", text: hover.contents.value }],
+      raw: hover,
+    });
+  });
+
   it("uses the declaration flag when requesting references", async () => {
     const registrar = new FakeRegistrar();
     const client = createClient([]);
@@ -273,8 +305,8 @@ describe("registerReadTools", () => {
       "lsp_references",
     )({
       file: "/workspace/src/index.ts",
-      line: 0,
-      character: 0,
+      line: 1,
+      character: 1,
       includeDeclaration: true,
     });
 
@@ -551,7 +583,7 @@ describe("registerReadTools", () => {
         "lsp_document_symbols",
       )({ file: "/workspace/src/index.ts" }),
     ).resolves.toEqual({
-      content: [{ type: "text", text: "- 📦 `DocSymbol`" }],
+      content: [{ type: "text", text: "- class `DocSymbol` 1:1" }],
       raw: [
         {
           name: "DocSymbol",
@@ -586,7 +618,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_type_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -610,7 +642,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_implementation",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [{ type: "text", text: "No result" }],
       raw: null,
@@ -630,7 +662,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -653,7 +685,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/README.md", line: 0, character: 0 }),
+      )({ file: "/workspace/README.md", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -679,7 +711,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {

@@ -35,7 +35,7 @@ A Model Context Protocol (MCP) server that gives language models access to **Lan
 - **🤖 Hands-Free Initialization** — Clients that support [MCP Roots](https://modelcontextprotocol.io/docs/concepts/roots) auto-initialize on connect — `lsp_init` disappears from the tool list once all servers start cleanly
 - **💾 Cross-Session Persistence** — Initialized workspaces and their ready languages are remembered across server restarts
 - **🔁 Graceful Degradation** — `lsp_init` reappears if a previously-working server starts failing (e.g. language added, binary missing)
-- **🛠 12 LSP Tools** — Definition, references, symbols, diagnostics, rename, code actions, formatting, and more
+- **🛠 13 LSP Tools** — Definition, hover, references, symbols, diagnostics, rename, code actions, formatting, and more
 - **📝 Read & Write Operations** — Both inspection and modification of code via LSP
 - **🌐 Polyglot Support** — Multiple language servers run simultaneously in the same project
 - **📋 Hybrid Responses** — Human-readable `text` field + raw LSP data in `raw` field
@@ -113,23 +113,32 @@ lsp_init({ root: "/path/to/project", languages: ["python", "typescript"] })
 | Tool                    | Description                          | Key Parameters                                         | Visibility                                                       |
 | ----------------------- | ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------- |
 | `lsp_init`              | Initialize server for a project root | `root` (required), `languages` (optional string array) | Conditional — hidden after a successful explicit `lsp_init` call |
-| `lsp_definition`        | Go to definition                     | `file`, `line`, `character`                            | Always                                                           |
-| `lsp_references`        | Find all references                  | `file`, `line`, `character`, `includeDeclaration`, [list options](#long-result-lists) | Always                                             |
-| `lsp_document_symbols`  | List symbols in a file               | `file`                                                 | Always                                                           |
+| `lsp_definition`        | Go to definition                     | `file`, `line`, `symbol` or `character`                            | Always                                                           |
+| `lsp_hover`             | Type, signature and docs of a symbol | `file`, `line`, `symbol` or `character` (text capped at 4000 chars) | Always                                                          |
+| `lsp_references`        | Find all references                  | `file`, `line`, `symbol` or `character`, `includeDeclaration`, [list options](#long-result-lists) | Always                                             |
+| `lsp_document_symbols`  | List symbols in a file, with positions and members | `file`                                                 | Always                                                           |
 | `lsp_workspace_symbols` | Search symbols across workspace      | `query`, [list options](#long-result-lists)            | Always                                                           |
 | `lsp_diagnostics`       | Get errors & warnings                | `file` (scope: `file` or `workspace`)                  | Always                                                           |
-| `lsp_type_definition`   | Go to type definition                | `file`, `line`, `character`                            | Always                                                           |
-| `lsp_implementation`    | Find implementations                 | `file`, `line`, `character`, [list options](#long-result-lists) | Always                                                  |
+| `lsp_type_definition`   | Go to type definition                | `file`, `line`, `symbol` or `character`                            | Always                                                           |
+| `lsp_implementation`    | Find implementations                 | `file`, `line`, `symbol` or `character`, [list options](#long-result-lists) | Always                                                  |
 | `lsp_health`            | Check status of all LSP servers      | _(none)_                                               | Always                                                           |
 
-Positions passed to tools (`line`, `character`) are **0-based**, as in LSP. Locations in tool output are **1-based** (`path:line:col`), as editors show them.
+### Pointing at a symbol
+
+All positions are **1-based**, in tool input and output alike, as editors show them — a `path:12:5` from one tool's output can be passed straight to the next. Instead of counting columns, pass the word to point at:
+
+```
+lsp_definition({ file: "/path/to/UseCase.kt", line: 3, symbol: "Either" })
+```
+
+The tool finds `Either` on line 3 (as a whole word, so not inside `EitherT`) and uses its first character. `occurrence: 2` picks the second match on the line. If the word is not on the line, the tool returns the line's text instead of guessing, and the language server is not called. `character` still works for positions no word describes, such as an operator. Ranges (`lsp_code_action`, `lsp_range_formatting`) are 1-based too, with an exclusive end.
 
 ### Write Tools
 
 | Tool                   | Description               | Key Parameters                         |
 | ---------------------- | ------------------------- | -------------------------------------- |
-| `lsp_rename`           | Rename symbol             | `file`, `line`, `character`, `newName` |
-| `lsp_code_action`      | Apply / list code actions | `file`, `line`, `character`, `apply`   |
+| `lsp_rename`           | Rename symbol             | `file`, `line`, `symbol` or `character`, `newName` |
+| `lsp_code_action`      | Apply / list code actions | `file`, `line`, `symbol` or `character`, `apply`   |
 | `lsp_formatting`       | Format document           | `file`                                 |
 | `lsp_range_formatting` | Format code range         | `file`, `range`                        |
 
@@ -142,6 +151,24 @@ Paths inside the project root are shown relative to it (`src/user.ts:12:5` rathe
 Some servers resolve library symbols to files inside archives — for example the Kotlin server points `Either` at `jar:///…/arrow-core/jars/classes.jar!/arrow/core/Either.class:6:21`. Such locations are returned as the URI the server sent instead of failing. The `.class` position refers to the server's decompiled view of the class, so it tells you which library (and version, from the path) defines the symbol rather than a line you can open.
 
 The `raw` field keeps absolute paths.
+
+### Source lines
+
+`lsp_definition` and `lsp_type_definition` always show the source line under each location, since they return few results and that line is usually what you want next:
+
+```
+Found 1 definition: `domain/src/main/java/…/UseCase.kt:20:36`
+  protected abstract suspend fun execute(params: Params): Either<Failure, Type>
+```
+
+`lsp_document_symbols` shows each symbol's kind and where its name is, and nests members under their class, up to three levels:
+
+```
+- class `OfficesViewModel` 22:7
+  - method `fetchOffices` 40:9
+```
+
+`lsp_hover` returns the server's signature and documentation. Links to project files in the documentation use the same form, e.g. `[execute](domain/…/UseCase.kt:20:36)`.
 
 ### Long result lists
 
@@ -163,6 +190,15 @@ The `raw` field keeps absolute paths.
   | `path`    | Keep only results whose displayed path contains this text, e.g. `"data/src/"` or `"Repository"`. The header reports the count before filtering. |
   | `limit`   | Maximum results to show. Defaults to 200 for references and implementations, 100 for workspace symbols.     |
   | `offset`  | Results to skip, for paging.                                                                                 |
+  | `context` | `lsp_references` and `lsp_implementation` only: show each result's source line, one result per line. The default `limit` drops to 50. |
+
+  With `context: true`:
+  ```
+  - `data/src/main/java/…/ArticlesRepositoryImpl.kt`
+    - 3:19   import arrow.core.Either
+    - 36:53  override suspend fun getAllArticles(page: Int): Either<Failure, ArticlesPage> =
+  ```
+  Lines are trimmed and cut at 120 characters; results inside archives have no source line.
 
   When a list is cut off, a footer says how to continue: `Showing 1–200 of 727. Pass offset: 200 for more.` `limit` counts positions, not files, so one file's positions can continue on the next page. The `raw` field holds the same page as the text.
 

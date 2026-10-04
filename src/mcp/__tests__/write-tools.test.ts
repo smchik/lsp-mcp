@@ -66,8 +66,8 @@ describe("registerWriteTools", () => {
       "lsp_rename",
     )({
       file: "/workspace/src/index.ts",
-      line: 0,
-      character: 12,
+      line: 1,
+      character: 13,
       newName: "newName",
     });
 
@@ -105,8 +105,8 @@ describe("registerWriteTools", () => {
         "lsp_rename",
       )({
         file: "/workspace/src/index.ts",
-        line: 0,
-        character: 0,
+        line: 1,
+        character: 1,
         newName: "x",
       }),
     ).resolves.toEqual({
@@ -131,7 +131,7 @@ describe("registerWriteTools", () => {
       getHandler(
         registrar,
         "lsp_code_action",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         { type: "text", text: "Available code actions:\n- [0] Fix import" },
@@ -167,7 +167,7 @@ describe("registerWriteTools", () => {
     const result = await getHandler(
       registrar,
       "lsp_code_action",
-    )({ file: "/workspace/src/index.ts", line: 0, character: 0, apply: true });
+    )({ file: "/workspace/src/index.ts", line: 1, character: 1, apply: true });
 
     expect(client.request).toHaveBeenCalledWith(
       "workspace/executeCommand",
@@ -227,8 +227,8 @@ describe("registerWriteTools", () => {
     )({
       file: "/workspace/src/index.ts",
       range: {
-        start: { line: 0, character: 0 },
-        end: { line: 0, character: 21 },
+        start: { line: 1, character: 1 },
+        end: { line: 1, character: 22 },
       },
       options: { tabSize: 4, insertSpaces: false },
     });
@@ -282,8 +282,8 @@ describe("registerWriteTools", () => {
         "lsp_code_action",
       )({
         file: "/workspace/src/index.ts",
-        line: 0,
-        character: 0,
+        line: 1,
+        character: 1,
         apply: { index: 1 },
       }),
     ).resolves.toEqual({
@@ -311,7 +311,7 @@ describe("registerWriteTools", () => {
       getHandler(
         registrar,
         "lsp_rename",
-      )({ file: "/workspace/README.md", line: 0, character: 0, newName: "x" }),
+      )({ file: "/workspace/README.md", line: 1, character: 1, newName: "x" }),
     ).resolves.toEqual({
       content: [
         {
@@ -326,7 +326,7 @@ describe("registerWriteTools", () => {
       getHandler(
         registrar,
         "lsp_code_action",
-      )({ file: "/workspace/README.md", line: 0, character: 0 }),
+      )({ file: "/workspace/README.md", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -369,7 +369,7 @@ describe("registerWriteTools", () => {
       getHandler(
         secondRegistrar,
         "lsp_code_action",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [{ type: "text", text: "No result" }],
       raw: [],
@@ -389,8 +389,8 @@ describe("registerWriteTools", () => {
         "lsp_rename",
       )({
         file: "/workspace/src/index.ts",
-        line: 0,
-        character: 0,
+        line: 1,
+        character: 1,
         newName: "x",
       }),
     ).resolves.toEqual({

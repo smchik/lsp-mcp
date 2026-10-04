@@ -185,7 +185,8 @@ async function invokeTool(
     });
   }
 
-  return await handler({ file, line, character }).then((result) => ({
+  // Smoke tests give 0-based LSP positions; tools take 1-based ones.
+  return await handler({ file, line: line + 1, character: character + 1 }).then((result) => ({
     text: extractText(result),
     raw: result.raw,
   }));

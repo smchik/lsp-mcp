@@ -5,10 +5,11 @@ import type { CodeAction, Range, TextEdit, WorkspaceEdit } from 'vscode-language
 import { z } from 'zod';
 
 import { pathToUri, uriToPath } from '../../utils/uri';
+import { POSITION_HINT, positionShape, resolvePosition, toLspPosition } from './position';
 import { failure, mapToolError, noServerResult, success, type MinimalLifecycleManager, type MinimalLspClient, type ToolRegistrar } from './shared';
 
 export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: MinimalLifecycleManager): void {
-  registrar.registerTool('lsp_rename', { description: 'Rename symbol', inputSchema: z.object({ file: z.string(), line: z.number().int(), character: z.number().int(), newName: z.string() }) }, async (args) => {
+  registrar.registerTool('lsp_rename', { description: `Rename symbol. ${POSITION_HINT}`, inputSchema: z.object({ ...positionShape, newName: z.string() }) }, async (args) => {
     const filePath = getFilePath(args);
     await lifecycleManager.ensureLanguageForFile(filePath);
     const client = lifecycleManager.getClientForFile(filePath);
@@ -20,11 +21,16 @@ export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: M
       return failure('Rename is not supported by the active language server.');
     }
 
+    const resolved = await resolvePosition(args, filePath);
+    if ('error' in resolved) {
+      return failure(resolved.error);
+    }
+
     try {
       await client.ensureDidOpen(filePath);
       const edit = await client.request('textDocument/rename', {
         textDocument: { uri: pathToUri(filePath) },
-        position: getPosition(args),
+        position: resolved.position,
         newName: String(args.newName ?? '')
       }, 15000) as WorkspaceEdit | null;
       return await applyWorkspaceEdit(edit, lifecycleManager, client, 'Applied workspace edit to');
@@ -33,7 +39,7 @@ export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: M
     }
   });
 
-  registrar.registerTool('lsp_code_action', { description: 'List or apply code actions', inputSchema: z.object({ file: z.string(), line: z.number().int(), character: z.number().int(), apply: z.union([z.boolean(), z.object({ index: z.number().int() })]).optional(), range: rangeSchema.optional() }) }, async (args) => {
+  registrar.registerTool('lsp_code_action', { description: `List or apply code actions at a position, or for range (1-based, end exclusive) when given. ${POSITION_HINT}`, inputSchema: z.object({ ...positionShape, apply: z.union([z.boolean(), z.object({ index: z.number().int() })]).optional(), range: rangeSchema.optional() }) }, async (args) => {
     const filePath = getFilePath(args);
     await lifecycleManager.ensureLanguageForFile(filePath);
     const client = lifecycleManager.getClientForFile(filePath);
@@ -41,11 +47,20 @@ export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: M
       return noServerResult(filePath);
     }
 
+    let range: Range;
+    if (isRange(args.range)) {
+      range = toLspRange(args.range);
+    } else {
+      const resolved = await resolvePosition(args, filePath);
+      if ('error' in resolved) {
+        return failure(resolved.error);
+      }
+
+      range = { start: resolved.position, end: resolved.position };
+    }
+
     try {
       await client.ensureDidOpen(filePath);
-      const range = isRange(args.range)
-        ? args.range
-        : { start: getPosition(args), end: getPosition(args) };
       const actions = await client.request('textDocument/codeAction', {
         textDocument: { uri: pathToUri(filePath) },
         range,
@@ -79,11 +94,11 @@ export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: M
     });
   });
 
-  registrar.registerTool('lsp_range_formatting', { description: 'Format selected range', inputSchema: z.object({ file: z.string(), range: rangeSchema, options: formattingOptionsSchema.optional() }) }, async (args) => {
+  registrar.registerTool('lsp_range_formatting', { description: 'Format selected range (1-based lines and characters, end exclusive)', inputSchema: z.object({ file: z.string(), range: rangeSchema, options: formattingOptionsSchema.optional() }) }, async (args) => {
     return await runFormattingRequest('textDocument/rangeFormatting', args, lifecycleManager, async (client, filePath, options) => {
       return await client.request('textDocument/rangeFormatting', {
         textDocument: { uri: pathToUri(filePath) },
-        range: args.range,
+        range: toLspRange(args.range as Range),
         options
       }, 15000) as TextEdit[] | null;
     });
@@ -91,7 +106,7 @@ export function registerWriteTools(registrar: ToolRegistrar, lifecycleManager: M
 
 }
 
-const positionSchema = z.object({ line: z.number().int(), character: z.number().int() });
+const positionSchema = z.object({ line: z.number().int().positive(), character: z.number().int().positive() });
 const rangeSchema = z.object({ start: positionSchema, end: positionSchema });
 const formattingOptionsSchema = z.object({ tabSize: z.number().int(), insertSpaces: z.boolean() });
 
@@ -260,8 +275,9 @@ function getFilePath(args: Record<string, unknown>): string {
   return typeof args.file === 'string' ? args.file : '';
 }
 
-function getPosition(args: Record<string, unknown>): { line: number; character: number } {
-  return { line: Number(args.line ?? 0), character: Number(args.character ?? 0) };
+/** Converts a 1-based range from tool input into LSP's 0-based form. */
+function toLspRange(range: Range): Range {
+  return { start: toLspPosition(range.start), end: toLspPosition(range.end) };
 }
 
 function comparePosition(left: { line: number; character: number }, right: { line: number; character: number }): number {
