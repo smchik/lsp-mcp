@@ -11,6 +11,7 @@ import { z } from "zod";
 import {
   DEFAULT_LOCATION_LIMIT,
   DEFAULT_SYMBOL_LIMIT,
+  defaultLimitFor,
   formatDefinition,
   formatDiagnostics,
   formatHealth,
@@ -22,7 +23,10 @@ import {
   selectPage,
   type ListOptions,
 } from "../formatters";
+import { loadSourceLines } from "../../utils/source-lines";
 import { pathToUri } from "../../utils/uri";
+
+import { POSITION_HINT, positionShape, resolvePosition } from "./position";
 
 import {
   failure,
@@ -68,15 +72,22 @@ export function registerReadTools(
 
   registrar.registerTool(
     "lsp_definition",
-    { description: "Find definitions", inputSchema: positionSchema },
+    {
+      description: `Find definitions, with the source line at each. ${POSITION_HINT}`,
+      inputSchema: positionSchema,
+    },
     async (args) => {
       return await runFileRequest<Location[] | Location | null>({
         args,
         lifecycleManager,
         method: "textDocument/definition",
         timeoutMs: 5000,
-        format: (result) =>
-          formatDefinition(asLocationArray(result), lifecycleManager.getRoot?.()),
+        format: async (result) =>
+          await formatDefinitionWithSource(
+            asLocationArray(result),
+            lifecycleManager,
+            "definition",
+          ),
         raw: (result) => normalizeLocations(asLocationArray(result)),
       });
     },
@@ -86,7 +97,7 @@ export function registerReadTools(
     "lsp_hover",
     {
       description:
-        "Show the type, signature and documentation of the symbol at a position, including library symbols whose definition is only a compiled class.",
+        `Show the type, signature and documentation of the symbol at a position, including library symbols whose definition is only a compiled class. ${POSITION_HINT}`,
       inputSchema: positionSchema,
     },
     async (args) => {
@@ -104,10 +115,11 @@ export function registerReadTools(
   registrar.registerTool(
     "lsp_references",
     {
-      description: `Find references. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT}`,
+      description: `Find references. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT} ${CONTEXT_HINT} ${POSITION_HINT}`,
       inputSchema: positionSchema
         .extend({ includeDeclaration: z.boolean().optional() })
-        .extend(listSchema.shape),
+        .extend(listSchema.shape)
+        .extend(contextSchema.shape),
     },
     async (args) => {
       const includeDeclaration = args.includeDeclaration === true;
@@ -122,7 +134,8 @@ export function registerReadTools(
           position,
           context: { includeDeclaration },
         }),
-        format: (result) => formatReferences(result, list),
+        format: async (result) =>
+          formatReferences(result, await withSourceLines(result, list)),
         raw: (result) => normalizeLocations(pageLocations(result, list)),
       });
     },
@@ -140,6 +153,7 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/documentSymbol",
         timeoutMs: 15000,
+        usesPosition: false,
         format: (result) => formatSymbols(result, lifecycleManager.getRoot?.()),
         raw: normalizeSymbols,
       });
@@ -267,17 +281,20 @@ export function registerReadTools(
 
   registrar.registerTool(
     "lsp_type_definition",
-    { description: "Find type definitions", inputSchema: positionSchema },
+    {
+      description: `Find type definitions, with the source line at each. ${POSITION_HINT}`,
+      inputSchema: positionSchema,
+    },
     async (args) => {
       return await runFileRequest<Location[] | Location | null>({
         args,
         lifecycleManager,
         method: "textDocument/typeDefinition",
         timeoutMs: 5000,
-        format: (result) =>
-          formatDefinition(
+        format: async (result) =>
+          await formatDefinitionWithSource(
             asLocationArray(result),
-            lifecycleManager.getRoot?.(),
+            lifecycleManager,
             "type definition",
           ),
         raw: (result) => normalizeLocations(asLocationArray(result)),
@@ -288,8 +305,10 @@ export function registerReadTools(
   registrar.registerTool(
     "lsp_implementation",
     {
-      description: `Find implementations. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT}`,
-      inputSchema: positionSchema.extend(listSchema.shape),
+      description: `Find implementations. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT} ${CONTEXT_HINT} ${POSITION_HINT}`,
+      inputSchema: positionSchema
+        .extend(listSchema.shape)
+        .extend(contextSchema.shape),
     },
     async (args) => {
       const list = readListOptions(args, lifecycleManager);
@@ -298,8 +317,14 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/implementation",
         timeoutMs: 5000,
-        format: (result) =>
-          formatLocationList(asLocationArray(result), "implementation", list),
+        format: async (result) => {
+          const locations = asLocationArray(result);
+          return formatLocationList(
+            locations,
+            "implementation",
+            await withSourceLines(locations, list),
+          );
+        },
         raw: (result) =>
           normalizeLocations(pageLocations(asLocationArray(result), list)),
       });
@@ -376,11 +401,11 @@ async function handleInitTool(
   }
 }
 
-const positionSchema = z.object({
-  file: z.string(),
-  line: z.number().int(),
-  character: z.number().int(),
-});
+const positionSchema = z.object(positionShape);
+
+const CONTEXT_HINT = `Pass context: true to show each result's source line (one result per line; default limit ${DEFAULT_LOCATION_LIMIT} becomes 50).`;
+
+const contextSchema = z.object({ context: z.boolean().optional() });
 
 const LIST_ARGS_HINT =
   "Results from the project's build directories are left out. Use path to keep only results whose project-relative path contains that text (e.g. \"data/src/\"), and offset/limit to page.";
@@ -400,7 +425,30 @@ function readListOptions(
     path: typeof args.path === "string" && args.path !== "" ? args.path : undefined,
     limit: typeof args.limit === "number" ? args.limit : undefined,
     offset: typeof args.offset === "number" ? args.offset : undefined,
+    context: args.context === true,
   };
+}
+
+/** Adds the source of the files on the current page when `context` is requested. */
+async function withSourceLines(
+  locations: Location[] | null,
+  list: ListOptions,
+): Promise<ListOptions> {
+  if (!list.context) {
+    return list;
+  }
+
+  const page = pageLocations(locations, list) ?? [];
+  return { ...list, lines: await loadSourceLines(page.map((location) => location.uri)) };
+}
+
+async function formatDefinitionWithSource(
+  locations: Location[] | null,
+  lifecycleManager: MinimalLifecycleManager,
+  noun: string,
+): Promise<string> {
+  const lines = await loadSourceLines((locations ?? []).map((location) => location.uri));
+  return formatDefinition(locations, lifecycleManager.getRoot?.(), noun, lines);
 }
 
 /** The same page of locations that the text output shows, for the raw result. */
@@ -416,7 +464,7 @@ function pageLocations(
     locations,
     (location) => location,
     list,
-    DEFAULT_LOCATION_LIMIT,
+    defaultLimitFor(list, DEFAULT_LOCATION_LIMIT),
   ).items;
 }
 
@@ -425,7 +473,9 @@ async function runFileRequest<T>(options: {
   lifecycleManager: MinimalLifecycleManager;
   method: string;
   timeoutMs: number;
-  format: (result: T | null) => string;
+  format: (result: T | null) => string | Promise<string>;
+  /** False for whole-document requests, which take no line or symbol. */
+  usesPosition?: boolean;
   raw: (result: T | null) => unknown;
   params?: (
     uri: string,
@@ -440,10 +490,15 @@ async function runFileRequest<T>(options: {
     return noServerResult(filePath);
   }
 
-  const position = {
-    line: Number(options.args.line ?? 0),
-    character: Number(options.args.character ?? 0),
-  };
+  const resolved =
+    options.usesPosition === false
+      ? { position: { line: 0, character: 0 } }
+      : await resolvePosition(options.args, filePath);
+  if ("error" in resolved) {
+    return failure(resolved.error);
+  }
+
+  const position = resolved.position;
   const uri = pathToUri(filePath);
 
   try {
@@ -456,7 +511,7 @@ async function runFileRequest<T>(options: {
       },
       options.timeoutMs,
     )) as T | null;
-    return success(options.format(result), options.raw(result));
+    return success(await options.format(result), options.raw(result));
   } catch (error) {
     return mapToolError(error, options.timeoutMs / 1000);
   }

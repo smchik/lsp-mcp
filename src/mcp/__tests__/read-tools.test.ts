@@ -184,11 +184,11 @@ describe("registerReadTools", () => {
     const definition = await getHandler(
       registrar,
       "lsp_definition",
-    )({ file: "/workspace/src/index.ts", line: 2, character: 4 });
+    )({ file: "/workspace/src/index.ts", line: 3, character: 5 });
     await getHandler(
       registrar,
       "lsp_definition",
-    )({ file: "/workspace/src/index.ts", line: 2, character: 4 });
+    )({ file: "/workspace/src/index.ts", line: 3, character: 5 });
 
     expect(client.ensureDidOpen).toHaveBeenCalledTimes(2);
     expect(client.ensureDidOpen).toHaveBeenCalledWith(
@@ -241,7 +241,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
+      )({ file: "/workspace/src/index.ts", line: 2, character: 2 }),
     ).resolves.toEqual({
       content: [
         {
@@ -277,7 +277,7 @@ describe("registerReadTools", () => {
     const result = await getHandler(
       registrar,
       "lsp_hover",
-    )({ file: "/workspace/src/index.kt", line: 2, character: 20 });
+    )({ file: "/workspace/src/index.kt", line: 3, character: 21 });
 
     expect(client.request).toHaveBeenCalledWith(
       "textDocument/hover",
@@ -305,8 +305,8 @@ describe("registerReadTools", () => {
       "lsp_references",
     )({
       file: "/workspace/src/index.ts",
-      line: 0,
-      character: 0,
+      line: 1,
+      character: 1,
       includeDeclaration: true,
     });
 
@@ -583,7 +583,7 @@ describe("registerReadTools", () => {
         "lsp_document_symbols",
       )({ file: "/workspace/src/index.ts" }),
     ).resolves.toEqual({
-      content: [{ type: "text", text: "- 📦 `DocSymbol`" }],
+      content: [{ type: "text", text: "- 📦 `DocSymbol` 1:1" }],
       raw: [
         {
           name: "DocSymbol",
@@ -618,7 +618,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_type_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -642,7 +642,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_implementation",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [{ type: "text", text: "No result" }],
       raw: null,
@@ -662,7 +662,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -685,7 +685,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/README.md", line: 0, character: 0 }),
+      )({ file: "/workspace/README.md", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {
@@ -711,7 +711,7 @@ describe("registerReadTools", () => {
       getHandler(
         registrar,
         "lsp_definition",
-      )({ file: "/workspace/src/index.ts", line: 0, character: 0 }),
+      )({ file: "/workspace/src/index.ts", line: 1, character: 1 }),
     ).resolves.toEqual({
       content: [
         {

@@ -76,6 +76,71 @@ describe('mcp formatters', () => {
     ])).toBe('Found 2 references in 2 files:\n- `/workspace/src/index.ts`: 1:1\n- `/workspace/src/lib.ts`: 3:4');
   });
 
+  describe('source lines', () => {
+    const uri = 'file:///workspace/domain/UseCase.kt';
+    const lines = new Map([[uri, [
+      'package demo',
+      'abstract class UseCase<in Params, out Type> {',
+      '    protected abstract suspend fun execute(params: Params): Either<Failure, Type>',
+      '    val long = "' + 'x'.repeat(200) + '"'
+    ]]]);
+    const at = (line: number, character: number) => ({
+      uri,
+      range: { start: { line, character }, end: { line, character: character + 1 } }
+    });
+
+    it('shows the source line under a definition', () => {
+      expect(formatDefinition([at(2, 35)], '/workspace', 'definition', lines)).toBe([
+        'Found 1 definition: `domain/UseCase.kt:3:36`',
+        '  protected abstract suspend fun execute(params: Params): Either<Failure, Type>'
+      ].join('\n'));
+    });
+
+    it('lists one result per line with its source when context is on', () => {
+      const text = formatReferences([at(3, 8), at(1, 15), { ...at(0, 0), uri: 'jar:///lib.jar!/A.class' }], {
+        root: '/workspace',
+        context: true,
+        lines
+      });
+
+      expect(text).toBe([
+        'Found 3 references in 2 files:',
+        '- `domain/UseCase.kt`',
+        '  - 2:16  abstract class UseCase<in Params, out Type> {',
+        '  - 4:9   val long = "' + 'x'.repeat(107) + '…',
+        '- `jar:///lib.jar!/A.class`',
+        '  - 1:1'
+      ].join('\n'));
+    });
+  });
+
+  it('shows document symbol positions and nests members', () => {
+    const range = (line: number, character: number) => ({
+      start: { line, character },
+      end: { line, character: character + 1 }
+    });
+
+    expect(formatSymbols([
+      {
+        name: 'OfficesViewModel',
+        kind: 5,
+        range: range(21, 0),
+        selectionRange: range(21, 6),
+        children: [
+          { name: 'fetchOffices', kind: 6, range: range(39, 4), selectionRange: range(39, 8), children: [
+            { name: 'result', kind: 13, range: range(40, 8), selectionRange: range(40, 12), children: [
+              { name: 'tooDeep', kind: 13, range: range(41, 8), selectionRange: range(41, 12) }
+            ] }
+          ] }
+        ]
+      }
+    ])).toBe([
+      '- 📦 `OfficesViewModel` 22:7',
+      '  - 🔧 `fetchOffices` 40:9',
+      '    - ≡ `result` 41:13'
+    ].join('\n'));
+  });
+
   describe('location lists', () => {
     const at = (file: string, line: number, character = 0) => ({
       uri: `file:///workspace/${file}`,

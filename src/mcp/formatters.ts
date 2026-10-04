@@ -11,6 +11,7 @@ type MarkedString = string | { language: string; value: string };
 
 import type { LanguageServerHealth } from "../lsp/lifecycle-manager";
 
+import { sourceLineAt, type SourceLines } from "../utils/source-lines";
 import { isInProjectBuildDirectory, uriToDisplayPath } from "../utils/uri";
 
 type DiagnosticWithUri = Diagnostic & { uri?: string };
@@ -105,22 +106,39 @@ export function formatHover(result: Hover | null): string {
   return `${cut}${openFence}\n\n(Truncated: showing ${HOVER_MAX_LENGTH} of ${text.length} characters.)`;
 }
 
+/**
+ * Formats definition-style results. With `lines`, the source line at each location
+ * is shown under it, since these results are few and that line is usually what
+ * the caller wants to see next.
+ */
 export function formatDefinition(
   locations: Location[] | null,
   root?: string | null,
   noun = "definition",
+  lines?: SourceLines,
 ): string {
   if (!locations || locations.length === 0) {
     return "No result";
   }
 
+  const withSource = (location: Location, indent: string): string[] => {
+    const source = sourceLineAt(lines, location.uri, location.range.start.line);
+    return source ? [`${indent}${source}`] : [];
+  };
+
   if (locations.length === 1) {
-    return `Found 1 ${noun}: \`${formatLocation(locations[0], root)}\``;
+    return [
+      `Found 1 ${noun}: \`${formatLocation(locations[0], root)}\``,
+      ...withSource(locations[0], "  "),
+    ].join("\n");
   }
 
   return [
     `Found ${noun}s:`,
-    ...locations.map((location) => `- \`${formatLocation(location, root)}\``),
+    ...locations.flatMap((location) => [
+      `- \`${formatLocation(location, root)}\``,
+      ...withSource(location, "  "),
+    ]),
   ].join("\n");
 }
 
@@ -132,6 +150,10 @@ export interface ListOptions {
   path?: string;
   limit?: number;
   offset?: number;
+  /** Show each result's source line, one result per line. */
+  context?: boolean;
+  /** Source of the files on the current page; needed for `context`. */
+  lines?: SourceLines;
 }
 
 export interface ListPage<T> {
@@ -190,6 +212,13 @@ export function selectPage<T>(
 
 export const DEFAULT_LOCATION_LIMIT = 200;
 export const DEFAULT_SYMBOL_LIMIT = 100;
+/** Default page size when source lines are shown, since each result takes a line. */
+export const DEFAULT_CONTEXT_LIMIT = 50;
+
+/** The default page size for a list, smaller when source lines are shown. */
+export function defaultLimitFor(options: ListOptions, base: number): number {
+  return options.context ? Math.min(base, DEFAULT_CONTEXT_LIMIT) : base;
+}
 
 /**
  * Formats locations grouped by file, so each path is printed once:
@@ -208,7 +237,7 @@ export function formatLocationList(
     locations,
     (location) => location,
     options,
-    DEFAULT_LOCATION_LIMIT,
+    defaultLimitFor(options, DEFAULT_LOCATION_LIMIT),
   );
   if (page.total === 0) {
     return emptyListMessage(noun, page, options);
@@ -217,6 +246,11 @@ export function formatLocationList(
   const groups = groupByPath(page.items, (location) => location, options.root);
   const lines = [listHeader(noun, page, options)];
   for (const [path, entries] of groups) {
+    if (options.context) {
+      lines.push(`- \`${path}\``, ...formatSourceEntries(entries, options.lines));
+      continue;
+    }
+
     const positions = entries
       .map(
         (location) =>
@@ -227,6 +261,25 @@ export function formatLocationList(
   }
 
   return appendPageFooter(lines, page).join("\n");
+}
+
+/**
+ * One line per location: the position, padded so the code lines up, then the
+ * source text at it (when the file could be read).
+ */
+function formatSourceEntries(entries: Location[], lines?: SourceLines): string[] {
+  const positions = entries.map(
+    (location) =>
+      `${location.range.start.line + 1}:${location.range.start.character + 1}`,
+  );
+  const width = Math.max(...positions.map((position) => position.length));
+  return entries.map((location, index) => {
+    const source = sourceLineAt(lines, location.uri, location.range.start.line);
+    const position = positions[index] ?? "";
+    return source
+      ? `  - ${position.padEnd(width)}  ${source}`
+      : `  - ${position}`;
+  });
 }
 
 export function formatReferences(
@@ -335,6 +388,13 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Nesting levels of document symbols shown (e.g. class › member › local). */
+export const DOCUMENT_SYMBOL_MAX_DEPTH = 3;
+
+/**
+ * Formats document symbols with the 1-based position of their name, so the line
+ * can be passed straight to other tools, and their members indented below them.
+ */
 export function formatSymbols(
   symbols: Array<DocumentSymbol | SymbolInformation> | null,
   root?: string | null,
@@ -343,16 +403,28 @@ export function formatSymbols(
     return "No result";
   }
 
-  return symbols
-    .map((symbol) => {
-      const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
-      const detail =
-        "location" in symbol
-          ? formatLocation(symbol.location, root)
-          : `${symbol.name}`;
-      return `- ${icon} \`${symbol.name}\`${"location" in symbol ? ` — ${detail}` : ""}`;
-    })
-    .join("\n");
+  const lines: string[] = [];
+  const visit = (symbol: DocumentSymbol | SymbolInformation, depth: number): void => {
+    const icon = SYMBOL_KIND_ICONS[symbol.kind] ?? "•";
+    const indent = "  ".repeat(depth);
+    if ("location" in symbol) {
+      lines.push(`${indent}- ${icon} \`${symbol.name}\` — ${formatLocation(symbol.location, root)}`);
+      return;
+    }
+
+    const start = symbol.selectionRange.start;
+    lines.push(`${indent}- ${icon} \`${symbol.name}\` ${start.line + 1}:${start.character + 1}`);
+    if (depth + 1 < DOCUMENT_SYMBOL_MAX_DEPTH) {
+      for (const child of symbol.children ?? []) {
+        visit(child, depth + 1);
+      }
+    }
+  };
+  for (const symbol of symbols) {
+    visit(symbol, 0);
+  }
+
+  return lines.join("\n");
 }
 
 export function formatDiagnostics(
