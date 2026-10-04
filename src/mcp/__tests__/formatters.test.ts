@@ -5,7 +5,9 @@ import {
   formatError,
   formatHealth,
   formatHover,
+  formatLocationList,
   formatReferences,
+  formatWorkspaceSymbols,
   formatSymbols
 } from '../formatters';
 
@@ -33,6 +35,19 @@ describe('mcp formatters', () => {
     ])).toBe('Found 1 definition: `/workspace/src/index.ts:42:5`');
   });
 
+  it('shows definitions relative to the root and keeps library URIs', () => {
+    const range = { start: { line: 4, character: 10 }, end: { line: 4, character: 19 } };
+
+    expect(formatDefinition([
+      { uri: 'file:///workspace/domain/Analytics.kt', range },
+      { uri: 'jar:///libs/koin-compose.jar!/org/koin/compose/KoinApplication.kt', range }
+    ], '/workspace')).toBe([
+      'Found definitions:',
+      '- `domain/Analytics.kt:5:11`',
+      '- `jar:///libs/koin-compose.jar!/org/koin/compose/KoinApplication.kt:5:11`'
+    ].join('\n'));
+  });
+
   it('formats references as a bulleted list', () => {
     expect(formatReferences([
       {
@@ -49,7 +64,90 @@ describe('mcp formatters', () => {
           end: { line: 2, character: 4 }
         }
       }
-    ])).toBe('Found 2 references:\n- `/workspace/src/index.ts:1:1`\n- `/workspace/src/lib.ts:3:4`');
+    ])).toBe('Found 2 references in 2 files:\n- `/workspace/src/index.ts`: 1:1\n- `/workspace/src/lib.ts`: 3:4');
+  });
+
+  describe('location lists', () => {
+    const at = (file: string, line: number, character = 0) => ({
+      uri: `file:///workspace/${file}`,
+      range: { start: { line, character }, end: { line, character: character + 1 } }
+    });
+    // Deliberately out of order, as servers return them.
+    const locations = [
+      at('domain/b.kt', 9, 4),
+      at('data/repo.kt', 2),
+      at('domain/a.kt', 0),
+      at('domain/b.kt', 1, 2),
+      at('data/repo.kt', 7)
+    ];
+
+    it('groups by file, sorts, and shows paths relative to the root', () => {
+      expect(formatReferences(locations, { root: '/workspace' })).toBe([
+        'Found 5 references in 3 files:',
+        '- `data/repo.kt`: 3:1, 8:1',
+        '- `domain/a.kt`: 1:1',
+        '- `domain/b.kt`: 2:3, 10:5'
+      ].join('\n'));
+    });
+
+    it('filters by path and reports the unfiltered total', () => {
+      expect(formatReferences(locations, { root: '/workspace', path: 'domain/' })).toBe([
+        'Found 3 references in 2 files matching path "domain/" (5 in total):',
+        '- `domain/a.kt`: 1:1',
+        '- `domain/b.kt`: 2:3, 10:5'
+      ].join('\n'));
+      expect(formatReferences(locations, { root: '/workspace', path: 'presentation/' }))
+        .toBe('No references matching path "presentation/" (5 in total)');
+    });
+
+    it('pages through the sorted results with a footer', () => {
+      expect(formatLocationList(locations, 'implementation', { root: '/workspace', limit: 2 })).toBe([
+        'Found 5 implementations in 3 files:',
+        '- `data/repo.kt`: 3:1, 8:1',
+        '',
+        'Showing 1–2 of 5. Pass offset: 2 for more.'
+      ].join('\n'));
+      expect(formatLocationList(locations, 'implementation', { root: '/workspace', limit: 2, offset: 4 })).toBe([
+        'Found 5 implementations in 3 files:',
+        '- `domain/b.kt`: 10:5',
+        '',
+        'Showing 5–5 of 5.'
+      ].join('\n'));
+      expect(formatLocationList(locations, 'implementation', { offset: 10 }))
+        .toContain('No results at offset 10; there are 5 in total.');
+    });
+
+    it('hides results from build directories of the project and says so', () => {
+      const withBuild = [
+        at('data/src/Repo.kt', 3),
+        { uri: 'jar:///workspace/data/build/intermediates/full.jar!/Repo.class', range: at('x', 5).range },
+        at('data/build/generated/ksp/Repo_Impl.kt', 8),
+        { uri: 'jar:///home/u/.gradle/caches/arrow.jar!/arrow/core/Either.class', range: at('x', 5).range }
+      ];
+
+      expect(formatReferences(withBuild, { root: '/workspace' })).toBe([
+        'Found 2 references in 2 files:',
+        '- `data/src/Repo.kt`: 4:1',
+        '- `jar:///home/u/.gradle/caches/arrow.jar!/arrow/core/Either.class`: 6:1',
+        '',
+        'Hidden: 2 results from build directories.'
+      ].join('\n'));
+      expect(formatReferences([withBuild[2]], { root: '/workspace' }))
+        .toBe('No references outside build directories (1 hidden in build directories)');
+    });
+
+    it('groups workspace symbols by file', () => {
+      expect(formatWorkspaceSymbols([
+        { name: 'UserRepositoryImpl', kind: 5, location: at('data/UserRepositoryImpl.kt', 20, 6) },
+        { name: 'UserRepository', kind: 11, location: at('domain/UserRepository.kt', 5, 10) },
+        { name: 'removeAccount', kind: 6, location: at('data/UserRepositoryImpl.kt', 40, 4) }
+      ], { root: '/workspace', path: 'data/' })).toBe([
+        'Found 2 symbols in 1 file matching path "data/" (3 in total):',
+        '- `data/UserRepositoryImpl.kt`',
+        '  - 📦 `UserRepositoryImpl` 21:7',
+        '  - 🔧 `removeAccount` 41:5'
+      ].join('\n'));
+    });
   });
 
   it('formats symbols with kind icons', () => {

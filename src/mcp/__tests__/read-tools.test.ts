@@ -343,21 +343,21 @@ describe("registerReadTools", () => {
       content: [{ type: "text", text: expect.stringContaining("UserService") }],
       raw: [
         {
-          name: "UserService",
-          kind: 5,
-          path: "/workspace/src/user.ts",
-          range: {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 4 },
-          },
-        },
-        {
           name: "login",
           kind: 12,
           path: "/workspace/src/auth.ts",
           range: {
             start: { line: 1, character: 0 },
             end: { line: 1, character: 3 },
+          },
+        },
+        {
+          name: "UserService",
+          kind: 5,
+          path: "/workspace/src/user.ts",
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 4 },
           },
         },
       ],
@@ -591,7 +591,7 @@ describe("registerReadTools", () => {
       content: [
         {
           type: "text",
-          text: "Found 1 definition: `/workspace/src/types.ts:2:3`",
+          text: "Found 1 type definition: `/workspace/src/types.ts:2:3`",
         },
       ],
       raw: [

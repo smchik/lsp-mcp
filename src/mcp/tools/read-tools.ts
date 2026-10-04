@@ -8,11 +8,17 @@ import type {
 import { z } from "zod";
 
 import {
+  DEFAULT_LOCATION_LIMIT,
+  DEFAULT_SYMBOL_LIMIT,
   formatDefinition,
   formatDiagnostics,
   formatHealth,
+  formatLocationList,
   formatReferences,
   formatSymbols,
+  formatWorkspaceSymbols,
+  selectPage,
+  type ListOptions,
 } from "../formatters";
 import { pathToUri } from "../../utils/uri";
 
@@ -67,7 +73,8 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/definition",
         timeoutMs: 5000,
-        format: (result) => formatDefinition(asLocationArray(result)),
+        format: (result) =>
+          formatDefinition(asLocationArray(result), lifecycleManager.getRoot?.()),
         raw: (result) => normalizeLocations(asLocationArray(result)),
       });
     },
@@ -76,13 +83,14 @@ export function registerReadTools(
   registrar.registerTool(
     "lsp_references",
     {
-      description: "Find references",
-      inputSchema: positionSchema.extend({
-        includeDeclaration: z.boolean().optional(),
-      }),
+      description: `Find references. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT}`,
+      inputSchema: positionSchema
+        .extend({ includeDeclaration: z.boolean().optional() })
+        .extend(listSchema.shape),
     },
     async (args) => {
       const includeDeclaration = args.includeDeclaration === true;
+      const list = readListOptions(args, lifecycleManager);
       return await runFileRequest<Location[] | null>({
         args,
         lifecycleManager,
@@ -93,8 +101,8 @@ export function registerReadTools(
           position,
           context: { includeDeclaration },
         }),
-        format: formatReferences,
-        raw: normalizeLocations,
+        format: (result) => formatReferences(result, list),
+        raw: (result) => normalizeLocations(pageLocations(result, list)),
       });
     },
   );
@@ -111,7 +119,7 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/documentSymbol",
         timeoutMs: 15000,
-        format: formatSymbols,
+        format: (result) => formatSymbols(result, lifecycleManager.getRoot?.()),
         raw: normalizeSymbols,
       });
     },
@@ -120,11 +128,14 @@ export function registerReadTools(
   registrar.registerTool(
     "lsp_workspace_symbols",
     {
-      description: "Search workspace symbols",
-      inputSchema: z.object({ query: z.string().default("") }),
+      description: `Search workspace symbols. Results are grouped by file and sorted; at most ${DEFAULT_SYMBOL_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT}`,
+      inputSchema: z
+        .object({ query: z.string().default("") })
+        .extend(listSchema.shape),
     },
     async (args) => {
       const query = typeof args.query === "string" ? args.query : "";
+      const list = readListOptions(args, lifecycleManager);
       await lifecycleManager.ensureSeedFilesOpen();
       const results = await Promise.all(
         lifecycleManager.getReadyClients().map(async (client) => {
@@ -135,8 +146,19 @@ export function registerReadTools(
           )) as SymbolInformation[];
         }),
       );
-      const merged = results.flat().slice(0, query === "" ? 100 : 500);
-      return success(formatSymbols(merged), normalizeSymbols(merged));
+      const merged = results
+        .flat()
+        .filter((symbol) => symbol?.location?.range !== undefined);
+      const page = selectPage(
+        merged,
+        (symbol) => symbol.location,
+        list,
+        DEFAULT_SYMBOL_LIMIT,
+      );
+      return success(
+        formatWorkspaceSymbols(merged, list),
+        normalizeSymbols(page.items),
+      );
     },
   );
 
@@ -190,7 +212,11 @@ export function registerReadTools(
             .getWorkspaceDiagnostics(language)
             .slice(0, 200);
 
-          let text = formatDiagnostics(diagnostics, "workspace");
+          let text = formatDiagnostics(
+            diagnostics,
+            "workspace",
+            lifecycleManager.getRoot?.(),
+          );
           const truncated = summary.perLanguage
             .filter((entry) => entry.truncated)
             .map((entry) => entry.language);
@@ -208,7 +234,10 @@ export function registerReadTools(
         }
 
         const diagnostics = lifecycleManager.getFileDiagnostics(filePath);
-        return success(formatDiagnostics(diagnostics, "file"), diagnostics);
+        return success(
+          formatDiagnostics(diagnostics, "file", lifecycleManager.getRoot?.()),
+          diagnostics,
+        );
       } catch (error) {
         return mapToolError(error, timeoutSeconds);
       }
@@ -224,7 +253,12 @@ export function registerReadTools(
         lifecycleManager,
         method: "textDocument/typeDefinition",
         timeoutMs: 5000,
-        format: (result) => formatDefinition(asLocationArray(result)),
+        format: (result) =>
+          formatDefinition(
+            asLocationArray(result),
+            lifecycleManager.getRoot?.(),
+            "type definition",
+          ),
         raw: (result) => normalizeLocations(asLocationArray(result)),
       });
     },
@@ -232,15 +266,21 @@ export function registerReadTools(
 
   registrar.registerTool(
     "lsp_implementation",
-    { description: "Find implementations", inputSchema: positionSchema },
+    {
+      description: `Find implementations. Results are grouped by file and sorted; at most ${DEFAULT_LOCATION_LIMIT} are shown unless limit is set. ${LIST_ARGS_HINT}`,
+      inputSchema: positionSchema.extend(listSchema.shape),
+    },
     async (args) => {
+      const list = readListOptions(args, lifecycleManager);
       return await runFileRequest<Location[] | Location | null>({
         args,
         lifecycleManager,
         method: "textDocument/implementation",
         timeoutMs: 5000,
-        format: (result) => formatDefinition(asLocationArray(result)),
-        raw: (result) => normalizeLocations(asLocationArray(result)),
+        format: (result) =>
+          formatLocationList(asLocationArray(result), "implementation", list),
+        raw: (result) =>
+          normalizeLocations(pageLocations(asLocationArray(result), list)),
       });
     },
   );
@@ -320,6 +360,44 @@ const positionSchema = z.object({
   line: z.number().int(),
   character: z.number().int(),
 });
+
+const LIST_ARGS_HINT =
+  "Results from the project's build directories are left out. Use path to keep only results whose project-relative path contains that text (e.g. \"data/src/\"), and offset/limit to page.";
+
+const listSchema = z.object({
+  path: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+  offset: z.number().int().nonnegative().optional(),
+});
+
+function readListOptions(
+  args: Record<string, unknown>,
+  lifecycleManager: MinimalLifecycleManager,
+): ListOptions {
+  return {
+    root: lifecycleManager.getRoot?.(),
+    path: typeof args.path === "string" && args.path !== "" ? args.path : undefined,
+    limit: typeof args.limit === "number" ? args.limit : undefined,
+    offset: typeof args.offset === "number" ? args.offset : undefined,
+  };
+}
+
+/** The same page of locations that the text output shows, for the raw result. */
+function pageLocations(
+  locations: Location[] | null,
+  list: ListOptions,
+): Location[] | null {
+  if (!locations) {
+    return null;
+  }
+
+  return selectPage(
+    locations,
+    (location) => location,
+    list,
+    DEFAULT_LOCATION_LIMIT,
+  ).items;
+}
 
 async function runFileRequest<T>(options: {
   args: Record<string, unknown>;

@@ -13,7 +13,7 @@ import type {
   WorkspaceAnalysisSummary,
 } from "../../lsp/lifecycle-manager";
 
-import { uriToPath } from "../../utils/uri";
+import { uriToDisplayPath } from "../../utils/uri";
 
 export interface ToolRegistrar {
   registerTool(
@@ -39,6 +39,8 @@ export interface MinimalLifecycleManager {
   getFileDiagnostics(filePath: string): DiagnosticWithUri[];
   getWorkspaceDiagnostics(language?: string): DiagnosticWithUri[];
   getHealth(): LanguageServerHealth[];
+  /** Project root of the active manager, used to shorten paths in tool output. */
+  getRoot?(): string | null;
   ensureLanguageForFile(filePath: string): Promise<void>;
   ensureSeedFilesOpen(): Promise<void>;
   analyzeWorkspace(language?: string): Promise<WorkspaceAnalysisSummary>;
@@ -102,7 +104,7 @@ export function normalizeLocations(
   }
 
   return locations.map((location) => ({
-    path: uriToPath(location.uri),
+    path: uriToDisplayPath(location.uri),
     range: location.range,
   }));
 }
@@ -120,7 +122,7 @@ export function normalizeSymbols(
       normalized.push({
         name: symbol.name,
         kind: symbol.kind,
-        path: uriToPath(symbol.location.uri),
+        path: uriToDisplayPath(symbol.location.uri),
         range: symbol.location.range,
       });
       continue;

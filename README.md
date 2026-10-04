@@ -39,6 +39,7 @@ A Model Context Protocol (MCP) server that gives language models access to **Lan
 - **📝 Read & Write Operations** — Both inspection and modification of code via LSP
 - **🌐 Polyglot Support** — Multiple language servers run simultaneously in the same project
 - **📋 Hybrid Responses** — Human-readable `text` field + raw LSP data in `raw` field
+- **📏 Compact, Paged Results** — Project-relative paths, results grouped by file, `path` filter and `limit`/`offset` paging for long lists
 - **🔌 MCP Stdio Protocol** — Works with any MCP-compatible client
 - **⚡ Zero Config** — Install and run, no per-language setup required
 
@@ -113,13 +114,15 @@ lsp_init({ root: "/path/to/project", languages: ["python", "typescript"] })
 | ----------------------- | ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------- |
 | `lsp_init`              | Initialize server for a project root | `root` (required), `languages` (optional string array) | Conditional — hidden after a successful explicit `lsp_init` call |
 | `lsp_definition`        | Go to definition                     | `file`, `line`, `character`                            | Always                                                           |
-| `lsp_references`        | Find all references                  | `file`, `line`, `character`                            | Always                                                           |
+| `lsp_references`        | Find all references                  | `file`, `line`, `character`, `includeDeclaration`, [list options](#long-result-lists) | Always                                             |
 | `lsp_document_symbols`  | List symbols in a file               | `file`                                                 | Always                                                           |
-| `lsp_workspace_symbols` | Search symbols across workspace      | `query` (limit: 100–500 results)                       | Always                                                           |
+| `lsp_workspace_symbols` | Search symbols across workspace      | `query`, [list options](#long-result-lists)            | Always                                                           |
 | `lsp_diagnostics`       | Get errors & warnings                | `file` (scope: `file` or `workspace`)                  | Always                                                           |
 | `lsp_type_definition`   | Go to type definition                | `file`, `line`, `character`                            | Always                                                           |
-| `lsp_implementation`    | Find implementations                 | `file`, `line`, `character`                            | Always                                                           |
+| `lsp_implementation`    | Find implementations                 | `file`, `line`, `character`, [list options](#long-result-lists) | Always                                                  |
 | `lsp_health`            | Check status of all LSP servers      | _(none)_                                               | Always                                                           |
+
+Positions passed to tools (`line`, `character`) are **0-based**, as in LSP. Locations in tool output are **1-based** (`path:line:col`), as editors show them.
 
 ### Write Tools
 
@@ -129,6 +132,39 @@ lsp_init({ root: "/path/to/project", languages: ["python", "typescript"] })
 | `lsp_code_action`      | Apply / list code actions | `file`, `line`, `character`, `apply`   |
 | `lsp_formatting`       | Format document           | `file`                                 |
 | `lsp_range_formatting` | Format code range         | `file`, `range`                        |
+
+## Output Format
+
+### Paths
+
+Paths inside the project root are shown relative to it (`src/user.ts:12:5` rather than `/home/me/project/src/user.ts:12:5`). Paths outside the root stay absolute.
+
+Some servers resolve library symbols to files inside archives — for example the Kotlin server points `Either` at `jar:///…/arrow-core/jars/classes.jar!/arrow/core/Either.class:6:21`. Such locations are returned as the URI the server sent instead of failing. The `.class` position refers to the server's decompiled view of the class, so it tells you which library (and version, from the path) defines the symbol rather than a line you can open.
+
+The `raw` field keeps absolute paths.
+
+### Long result lists
+
+`lsp_references`, `lsp_implementation` and `lsp_workspace_symbols` can return hundreds of results, so their output is shaped to stay readable:
+
+- **Grouped by file** — each path is printed once, followed by its positions:
+  ```
+  Found 179 references in 61 files:
+  - `data/src/main/java/…/ArticlesRepositoryImpl.kt`: 3:19, 36:53, 42:54
+  - `domain/src/main/java/…/UseCase.kt`: 3:19, 15:50, 20:61
+  ```
+  Workspace symbols list one symbol per line under each file.
+- **Sorted** by path, then position, so pages are stable between calls.
+- **Build output left out** — results whose file, or whose archive for `jar:` locations, lies in a `build` directory inside the project root (compiled module jars, generated sources) are dropped, since they duplicate the sources. The output ends with `Hidden: N results from build directories.` when anything was dropped. Libraries outside the project are kept. Definition and type definition lookups are not filtered, so they still reach generated code such as `BuildConfig`.
+- **List options:**
+
+  | Parameter | Description                                                                                                  |
+  | --------- | ------------------------------------------------------------------------------------------------------------ |
+  | `path`    | Keep only results whose displayed path contains this text, e.g. `"data/src/"` or `"Repository"`. The header reports the count before filtering. |
+  | `limit`   | Maximum results to show. Defaults to 200 for references and implementations, 100 for workspace symbols.     |
+  | `offset`  | Results to skip, for paging.                                                                                 |
+
+  When a list is cut off, a footer says how to continue: `Showing 1–200 of 727. Pass offset: 200 for more.` `limit` counts positions, not files, so one file's positions can continue on the next page. The `raw` field holds the same page as the text.
 
 ## Configuration
 
@@ -179,6 +215,10 @@ gem install solargraph
 ### Server not detecting language
 
 Ensure your project root contains a language marker file (e.g., `package.json` for TypeScript, `Cargo.toml` for Rust). The server scans the directory passed to `lsp_init` for these markers.
+
+### Kotlin server fails with a `LOCK` error
+
+The Kotlin server keeps one index per project under `~/.cache/JetBrains/IntelliJServer/workspaces/<hash>/`, and only one server process can open it. If another `lsp-mcp` instance (for example another editor or agent session on the same project) already runs a Kotlin server, `lsp_health` reports `While lock file: …/LOCK: Resource temporarily unavailable`. Close the other session, or stop its `lsp-mcp` process, then call `lsp_init` again. Stopping only the Kotlin server is not enough, because its `lsp-mcp` restarts it immediately.
 
 ### High memory usage
 
